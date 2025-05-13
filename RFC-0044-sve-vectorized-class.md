@@ -97,7 +97,7 @@ Choose one of the following:
 
 
 #### Additional Context
-TBD
+[Working proof of concept code](https://github.com/Ryo-not-rio/pytorch/commit/b2e5c66017fb48230d1ea2493b8548ad76d88fcf)
 
 
 ### Next Steps
@@ -105,7 +105,7 @@ TBD
 
 
 #### Tracking issue
-<github issue URL>
+https://github.com/pytorch/pytorch/issues/153471
 
 
 #### Exceptions
