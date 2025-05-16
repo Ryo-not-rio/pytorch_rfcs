@@ -8,10 +8,10 @@
 A vector length agnostic implementation of the `Vectorized` class for SVE.
 
 ## **Motivation**
-PyTorch contains a "Vectorized" class that wraps different SIMD intrinsics for different architectures by having a vector as a class attribute, and the class methods acting as the wrapper around the intrinsics.  This works well for non-scalable vectors but poses an issue for SVE due to the inability to store them as class attributes. The current workaround for this is to use the compiler flag -msve-vector-bits=\<bits\>, however this is not ideal as this would 1. require separate vectorized classes for different vector lengths and 2. does not allow for runtime detection of the actual vector length. We currently only have an implementation of the Vectorized class for 256-bit SVE machines but as we think about adding support for different vector length, we need to consider how to avoid code duplication as raised by @malfet [here](https://github.com/pytorch/pytorch/pull/138388#issuecomment-2635612409). This RFC aims to solve the issue but creating a Vectorized class that detects the vector length at runtime as SVE is intended to be used, allowing us to support different vector lengths without writing any duplicate code.
+PyTorch contains a `Vectorized` class that wraps different SIMD intrinsics for different architectures by having a vector as a class attribute, and the class methods acting as the wrapper around the intrinsics.  This works well for non-scalable vectors but poses an issue for SVE due to the inability to store them as class attributes. The current workaround for this is to use the compiler flag `-msve-vector-bits=\<bits\>`, however this is not ideal as this would 1. require separate `Vectorized` classes for different vector lengths and 2. does not allow for runtime detection of the actual vector length. We currently only have an implementation of the `Vectorized` class for 256-bit SVE machines but as we think about adding support for different vector length, we need to consider how to avoid code duplication as raised by @malfet [here](https://github.com/pytorch/pytorch/pull/138388#issuecomment-2635612409). This RFC aims to solve the issue but creating a `Vectorized` class that detects the vector length at runtime as SVE is intended to be used, allowing us to support different vector lengths without writing any duplicate code.
 
 ## **Proposed Implementation**
-The basic premise of our proposal is to store not the vector but an array in our vectorized class which we will load from and store to with each operation. A minimal version is shown at the end.
+The basic premise of our proposal is to store not the SVE vector but an array in our `Vectorized` class which we will load from and store to with each operation. A minimal version is shown at the end.
 
 Now this introduces quite an obvious overhead of an additional load and store operation with each op. However, the compiler is able to optimize these out with the following conditions:
 
@@ -22,7 +22,7 @@ Now this introduces quite an obvious overhead of an additional load and store op
 Ensuring these conditions are met and by inlining the functions, we can rely on the compiler to optimize the duplicate load and stores, ensuring we do not introduce any regressions.
 
 ### The size problem
-We face a challenge with this implementation due to the constraint of the size() function being constexpr. The size() function which returns the number of elements in the Vectorized class cannot be constexpr in our implmentation due to SVE vector lengths being unknown at compile time. We propose we change this to be const instead of constexpr.
+We face a challenge with this implementation due to the constraint of the size() function being constexpr. The size() function which returns the number of elements in the `Vectorized` class cannot be constexpr in our implmentation due to SVE vector lengths being unknown at compile time. We propose we change this to be const instead of constexpr.
 
 ```
 class Vectorized<float> {
@@ -62,13 +62,16 @@ class Vectorized<float> {
 
 ## **Drawbacks**
 ### Implementation cost
-This is a large change which requires an overhaul of all of the current SVE Vectorized as well as any code that expects the size() function to be constexpr. The first cost can be mitigated by updating the Vectorized classes one by one, but the size() change will need to be done all at once.
+This is a large change which requires an overhaul of all of the current SVE `Vectorized` as well as any code that expects the size() function to be constexpr. The first cost can be mitigated by updating the `Vectorized` classes one by one, but the size() change will need to be done all at once.
 
 ### Sideffects from non-constexpr size()
 There are a number of functions that use the size() function to initialize an array. These will have to be changed to an alternative such as a vector. Since a vector is implemented as an array under the hood, we hope this will not cause any regressions but a thorough benchmarking of these functions need to be done to ensure that this is the case.
 
+### Memory footprint increase
+By storing an array with the size "max SVE vector length (2048 bits being the maximum possible and 512 bits being the longest hardware available)", the memory footprint is increased by `2048 bits x number of existing Vectorized classes`. Since `Vectorized` classes are created and destoryed in loops with only a few instances existing simultaneously, we expect this effect to be minimal, but we should benchmark this using actual models. We could also limit this effect by using the maximum vector size currently available on hardware with scope to change this if necessary.
+
 ## **Alternatives**
-To keep the size() function constexpr, we considered setting the size of the Vectorized class to be the maximum possible SVE vector length (currently 512 bits) and loading multiple vectors as necessary. However, this poses the following problems:
+To keep the size() function constexpr, we considered setting the size of the `Vectorized` class to be the maximum possible SVE vector length and loading multiple vectors as necessary. However, this poses the following problems:
 
 1. Increases the tail loop size unecessarily for machines with smaller vector lengths.
 2. Compiler can no longer optimize out duplicate loads and stores as multiple vectors need to be handled consecutively.
