@@ -22,7 +22,7 @@ Now this introduces quite an obvious overhead of an additional load and store op
 Ensuring these conditions are met and by inlining the functions, we can rely on the compiler to optimize the duplicate load and stores, ensuring we do not introduce any regressions.
 
 ### The size problem
-We face a challenge with this implementation due to the constraint of the size() function being constexpr. The size() function which returns the number of elements in the `Vectorized` class cannot be constexpr in our implmentation due to SVE vector lengths being unknown at compile time. We propose we change this to be const instead of constexpr.
+We face a challenge with this implementation due to the constraint of the size() function being constexpr. The size() function which returns the number of elements in the `Vectorized` class cannot be constexpr in our implmentation due to SVE vector lengths being unknown at compile time. We propose we change this to be const instead of constexpr. Currently, size() is used to initialize std::arrays and to instantiate templated functions. These will need to be replaced with c arrays and the template parameters made into function arguments. The full list of changes that need to occur can be seen [here](https://github.com/pytorch/pytorch/commit/fa05c1de3340215da5dc0a32612e75e2816fc143).
 
 ```
 class Vectorized<float> {
@@ -62,13 +62,21 @@ class Vectorized<float> {
 
 ## **Drawbacks**
 ### Implementation cost
-This is a large change which requires an overhaul of all of the current SVE `Vectorized` as well as any code that expects the size() function to be constexpr. The first cost can be mitigated by updating the `Vectorized` classes one by one, but the size() change will need to be done all at once.
+This is a large change which requires an overhaul of all of the current SVE `Vectorized` as well as any code that expects the size() function to be constexpr. The first cost can be mitigated by updating the `Vectorized` classes one by one.
 
 ### Sideffects from non-constexpr size()
-There are a number of functions that use the size() function to initialize an array. These will have to be changed to an alternative such as a vector. Since a vector is implemented as an array under the hood, we hope this will not cause any regressions but a thorough benchmarking of these functions need to be done to ensure that this is the case.
+By changing the size() to non-constexpr, we will be changing a large part of the codebase which may cause regressions. These will need to be benchmarked thoroughly and if we choose to accept any regressions, they will need to be limited to aarch64 architectures.
 
 ### Memory footprint increase
 By storing an array with the size "max SVE vector length (2048 bits being the maximum possible and 512 bits being the longest hardware available)", the memory footprint is increased by `2048 bits x number of existing Vectorized classes`. Since `Vectorized` classes are created and destoryed in loops with only a few instances existing simultaneously, we expect this effect to be minimal, but we should benchmark this using actual models. We could also limit this effect by using the maximum vector size currently available on hardware with scope to change this if necessary.
+
+## **Benchmarking plan**
+To mitigate the risk from changing the size() from constexpr to const, we propose the following order of patches to PyTorch:
+
+1. Make individual pull requests for each function affected by this change
+2. Bench mark each patch thoroughly both on aarch64 and x86 for regressions
+3. Once all affected functions are merged, switch the Vectorized class to the VLA implementation
+4. Benchmark the VLA Vectorized class
 
 ## **Alternatives**
 To keep the size() function constexpr, we considered setting the size of the `Vectorized` class to be the maximum possible SVE vector length and loading multiple vectors as necessary. However, this poses the following problems:
