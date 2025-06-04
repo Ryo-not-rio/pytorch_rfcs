@@ -64,11 +64,14 @@ class Vectorized<float> {
 ### Implementation cost
 This is a large change which requires an overhaul of all of the current SVE `Vectorized` as well as any code that expects the size() function to be constexpr. The first cost can be mitigated by updating the `Vectorized` classes one by one.
 
-### Sideffects from non-constexpr size()
+### Side-effects from non-constexpr size()
 By changing the size() to non-constexpr, we will be changing a large part of the codebase which may cause regressions. These will need to be benchmarked thoroughly and if we choose to accept any regressions, they will need to be limited to aarch64 architectures.
 
 ### Memory footprint increase
 By storing an array with the size "max SVE vector length (2048 bits being the maximum possible and 512 bits being the longest hardware available)", the memory footprint is increased by `2048 bits x number of existing Vectorized classes`. Since `Vectorized` classes are created and destoryed in loops with only a few instances existing simultaneously, we expect this effect to be minimal, but we should benchmark this using actual models. We could also limit this effect by using the maximum vector size currently available on hardware with scope to change this if necessary.
+
+### Side-effects from using -O3
+Using `-O3` increases the package size of PyTorch, which is not an issue for use cases using the PyPI package where we already use `-O3` or for devices where package size is not a large concern such as infrastructure. However, it becomes an issue for clients such as mobile where package size may matter. In these instances where PyTorch is built using lower optimizaion flags, there will be a regression compared to the current implementation.
 
 ## **Benchmarking plan**
 To mitigate the risk from changing the size() from constexpr to const, we propose the following order of patches to PyTorch:
